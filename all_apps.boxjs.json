@@ -1,0 +1,30 @@
+{
+  "id": "com.myname.superbox",
+  "name": "我的多项目订阅",
+  "author": "@myname",
+  "apps": [
+    {
+      "id": "app_jdb",
+      "name": "加多宝",
+      "keys": ["jdb_accounts", "JDBC_ACCOUNTS"],
+      "settings": [
+        {
+          "id": "jdb_accounts",
+          "name": "捕获的账号",
+          "val": [],
+          "type": "textarea",
+          "desc": "圈X自动捕获"
+        },
+        {
+          "id": "JDBC_ACCOUNTS",
+          "name": "青龙变量",
+          "val": "",
+          "type": "textarea",
+          "desc": "同步到青龙的变量"
+        }
+      ],
+      "author": "@myname",
+      "repo": ""
+    }
+  ]
+}
