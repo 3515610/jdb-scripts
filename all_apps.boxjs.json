@@ -13,7 +13,7 @@
           "name": "捕获的账号",
           "val": [],
           "type": "textarea",
-          "desc": "圈X/Surge自动捕获"
+          "desc": "Surge自动捕获"
         }
       ],
       "author": "@myname",
@@ -53,7 +53,54 @@
           "desc": "填入要同步到青龙的变量名称"
         }
       ],
-      "script": "https://raw.githubusercontent.com/你的用户名/jdb-scripts/main/jdb_sync.js",
+      "script": "https://cdn.jsdelivr.net/gh/3515610/jdb-scripts@main/jdb_sync.js?v=1",
+      "author": "@myname",
+      "repo": ""
+    },
+    {
+      "id": "app_ksf",
+      "name": "康师傅",
+      "keys": ["ksf_accounts"],
+      "settings": [
+        {
+          "id": "ksf_accounts",
+          "name": "捕获的账号",
+          "val": [],
+          "type": "textarea",
+          "desc": "Surge自动捕获"
+        }
+      ],
+      "author": "@myname",
+      "repo": ""
+    },
+    {
+      "id": "ksf_sync",
+      "name": "康师傅同步青龙",
+      "keys": ["KSF_QL_URL", "KSF_CLIENT_ID", "KSF_CLIENT_SECRET"],
+      "settings": [
+        {
+          "id": "KSF_QL_URL",
+          "name": "青龙服务器地址",
+          "val": "http://192.168.99.1:5700",
+          "type": "text",
+          "desc": "填入青龙地址"
+        },
+        {
+          "id": "KSF_CLIENT_ID",
+          "name": "clientId",
+          "val": "",
+          "type": "text",
+          "desc": "填入青龙应用的 clientId"
+        },
+        {
+          "id": "KSF_CLIENT_SECRET",
+          "name": "secret",
+          "val": "",
+          "type": "text",
+          "desc": "填入青龙应用的 secret"
+        }
+      ],
+      "script": "https://cdn.jsdelivr.net/gh/3515610/jdb-scripts@main/ksf_sync.js?v=1",
       "author": "@myname",
       "repo": ""
     }
