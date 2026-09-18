@@ -6,23 +6,54 @@
     {
       "id": "app_jdb",
       "name": "加多宝",
-      "keys": ["jdb_accounts", "JDBC_ACCOUNTS"],
+      "keys": ["jdb_accounts"],
       "settings": [
         {
           "id": "jdb_accounts",
           "name": "捕获的账号",
           "val": [],
           "type": "textarea",
-          "desc": "圈X自动捕获"
-        },
-        {
-          "id": "JDBC_ACCOUNTS",
-          "name": "青龙变量",
-          "val": "",
-          "type": "textarea",
-          "desc": "同步到青龙的变量"
+          "desc": "圈X/Surge自动捕获"
         }
       ],
+      "author": "@myname",
+      "repo": ""
+    },
+    {
+      "id": "jdb_sync",
+      "name": "加多宝同步青龙",
+      "keys": ["JDB_QL_URL", "JDB_CLIENT_ID", "JDB_CLIENT_SECRET", "JDB_ENV_NAME"],
+      "settings": [
+        {
+          "id": "JDB_QL_URL",
+          "name": "青龙服务器地址",
+          "val": "http://192.168.99.1:5700",
+          "type": "text",
+          "desc": "填入青龙地址，不带末尾斜杠"
+        },
+        {
+          "id": "JDB_CLIENT_ID",
+          "name": "clientId",
+          "val": "",
+          "type": "text",
+          "desc": "填入青龙应用的 clientId"
+        },
+        {
+          "id": "JDB_CLIENT_SECRET",
+          "name": "secret",
+          "val": "",
+          "type": "text",
+          "desc": "填入青龙应用的 secret"
+        },
+        {
+          "id": "JDB_ENV_NAME",
+          "name": "变量名称",
+          "val": "JDBC_ACCOUNTS",
+          "type": "text",
+          "desc": "填入要同步到青龙的变量名称"
+        }
+      ],
+      "script": "https://raw.githubusercontent.com/你的用户名/jdb-scripts/main/jdb_sync.js",
       "author": "@myname",
       "repo": ""
     }
