@@ -1,39 +1,58 @@
 // ==========================================
-// 统一绿茶 抓包即推送青龙 (单条即时推送版)
+// 统一绿茶 抓包即推送青龙 (终极防重复版)
 // ==========================================
-const QL_URL = "http://192.168.99.1:5700"; // ⚠️ 改成你的青龙地址
+const QL_URL = "http://192.168.99.1:5700"; 
 const CLIENT_ID = "tGj6_OuEQFme"; 
 const CLIENT_SECRET = "mvz-zcTL3FAWsTEDCikXvD_M"; 
-const ENV_NAME = "tongyilvcha_zh"; // 根据你的截图自动匹配了
+const ENV_NAME = "tongyilvcha_zh"; // ⚠️ 必须和你青龙里一致
 const KEY_NAME = "tylc_accounts";
 
-// 提取截图里看到的 Authorization 字段
+// 解析JWT中的唯一标识(sub)用于完美去重
+function getJwtSub(token) {
+    try {
+        const parts = token.split('.');
+        if (parts.length !== 3) return token;
+        const base64Url = parts[1];
+        const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+        const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+            return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+        }).join(''));
+        return JSON.parse(jsonPayload).sub || token;
+    } catch(e) {
+        return token;
+    }
+}
+
 const ck = $request.headers['Authorization'] || $request.headers['authorization'];
 
 if (ck) {
     let accounts = JSON.parse($persistentStore.read(KEY_NAME) || "[]");
     
-    // 简单去重
-    const exists = accounts.find(a => a.ck === ck);
+    // 🚀 核心修复：用 JWT 的 sub 字段去重
+    const uniqueId = getJwtSub(ck);
+    const existsIndex = accounts.findIndex(a => (a.uniqueId === uniqueId) || (a.ck === ck));
     
-    if (exists) {
-        if (exists.ck !== ck) {
-            exists.ck = ck;
-            $persistentStore.write(JSON.stringify(accounts), KEY_NAME);
-        }
+    if (existsIndex !== -1) {
+        // 账号存在，只更新Token，绝不改变remark（备注）
+        accounts[existsIndex].ck = ck;
+        accounts[existsIndex].uniqueId = uniqueId;
     } else {
-        accounts.push({ ck: ck, remark: `账号${accounts.length + 1}` });
-        $persistentStore.write(JSON.stringify(accounts), KEY_NAME);
+        // 新账号
+        accounts.push({ ck: ck, remark: `账号${accounts.length + 1}`, uniqueId: uniqueId });
     }
+    $persistentStore.write(JSON.stringify(accounts), KEY_NAME);
 
-    // 🚀 立刻开始推送到青龙（单条数据不会超时！）
+    // 推送到青龙
     const formatted = accounts.map(a => `${a.remark}@${a.ck}`).join("\n");
 
     $httpClient.get({ 
         url: `${QL_URL}/open/auth/token?client_id=${CLIENT_ID}&client_secret=${CLIENT_SECRET}`, 
         timeout: 5 
     }, function(err, resp, data) {
-        if (err || !data) return $done();
+        if (err || !data) {
+            $notify("统一绿茶同步失败 ❌", "连接青龙失败", err || "无响应");
+            return $done();
+        }
         let qlToken;
         try { qlToken = JSON.parse(data).data.token; } catch(e) { return $done(); }
 
@@ -57,7 +76,7 @@ if (ck) {
                 timeout: 5
             }, function(err3, resp3, data3) {
                 if (!err3 && resp3 && resp3.status === 200) {
-                    $notify("统一绿茶CK同步成功 🎉", `已更新账号: ${exists ? exists.remark : accounts[accounts.length-1].remark}`, `当前共 ${accounts.length} 个账号`);
+                    $notify("统一绿茶CK同步成功 🎉", `当前共 ${accounts.length} 个账号`, `已同步: ${accounts.map(a=>a.remark).join(',')}`);
                 } else {
                     $notify("统一绿茶同步失败 ❌", "推送出错", (err3 || "HTTP:" + (resp3 ? resp3.status : "未知")));
                 }
