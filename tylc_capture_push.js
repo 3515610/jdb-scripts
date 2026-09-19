@@ -1,19 +1,19 @@
 // ==========================================
 // 统一绿茶 抓包即推送青龙 (单条即时推送版)
 // ==========================================
-const QL_URL = "http://192.168.99.1:5700"; // ⚠️ 替换为你的青龙地址
+const QL_URL = "http://192.168.99.1:5700"; // ⚠️ 改成你的青龙地址
 const CLIENT_ID = "tGj6_OuEQFme"; 
 const CLIENT_SECRET = "mvz-zcTL3FAWsTEDCikXvD_M"; 
-const ENV_NAME = "TYLC_CK"; // ⚠️ 替换为统一绿茶脚本实际读取的环境变量名（看py代码里读取的啥）
+const ENV_NAME = "tongyilvcha_zh"; // 根据你的截图自动匹配了
 const KEY_NAME = "tylc_accounts";
 
-// ⚠️ 替换为统一绿茶实际抓包时的请求头字段名（可能是 token、cookie 或 Authorization）
-const ck = $request.headers['token'] || $request.headers['Authorization'] || $request.headers['authorization'];
+// 提取截图里看到的 Authorization 字段
+const ck = $request.headers['Authorization'] || $request.headers['authorization'];
 
 if (ck) {
     let accounts = JSON.parse($persistentStore.read(KEY_NAME) || "[]");
     
-    // 简单去重（也可以用 jwt 解析唯一的 id，但单账号直接对比 ck 就够了）
+    // 简单去重
     const exists = accounts.find(a => a.ck === ck);
     
     if (exists) {
@@ -26,7 +26,7 @@ if (ck) {
         $persistentStore.write(JSON.stringify(accounts), KEY_NAME);
     }
 
-    // 🚀 立刻开始推送到青龙（因为是一次抓包，只发1条数据，1KB，绝不会超时！）
+    // 🚀 立刻开始推送到青龙（单条数据不会超时！）
     const formatted = accounts.map(a => `${a.remark}@${a.ck}`).join("\n");
 
     $httpClient.get({ 
@@ -57,7 +57,6 @@ if (ck) {
                 timeout: 5
             }, function(err3, resp3, data3) {
                 if (!err3 && resp3 && resp3.status === 200) {
-                    // 同步成功，弹通知！
                     $notify("统一绿茶CK同步成功 🎉", `已更新账号: ${exists ? exists.remark : accounts[accounts.length-1].remark}`, `当前共 ${accounts.length} 个账号`);
                 } else {
                     $notify("统一绿茶同步失败 ❌", "推送出错", (err3 || "HTTP:" + (resp3 ? resp3.status : "未知")));
