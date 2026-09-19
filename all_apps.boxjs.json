@@ -103,6 +103,22 @@
       "script": "https://cdn.jsdelivr.net/gh/3515610/jdb-scripts@main/ksf_sync.js?v=1",
       "author": "@myname",
       "repo": ""
+    },
+    {
+      "id": "app_tylc",
+      "name": "统一绿茶",
+      "keys": ["tylc_accounts"],
+      "settings": [
+        {
+          "id": "tylc_accounts",
+          "name": "捕获的账号",
+          "val": [],
+          "type": "textarea",
+          "desc": "Surge自动捕获"
+        }
+      ],
+      "author": "@myname",
+      "repo": ""
     }
   ]
 }
