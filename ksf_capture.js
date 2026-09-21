@@ -1,17 +1,36 @@
 // ==========================================
-// 康师傅 抓包即同步到青龙（防止大数据超时版）【Surge专用｜成功+失败通知】
+// 康师傅 抓包即同步到青龙｜借鉴glados消息缓存模式 Surge专用｜原生通知+Bark兜底双推送
 // ==========================================
 const QL_URL = "http://192.168.99.1:5700";
-const CLIENT_ID = "tGj6_OuEQFme"; 
-const CLIENT_SECRET = "mvz-zcTL3FAWsTEDCikXvD_M"; 
+const CLIENT_ID = "tGj6_OuEQFme";
+const CLIENT_SECRET = "mvz-zcTL3FAWsTEDCikXvD_M";
 const ENV_NAME = "kangshifu_zh";
 const KEY_NAME = "ksf_accounts";
+const BARK_KEY = ""; //填写你的bark密钥，留空则不启用bark
+
+// 缓存通知消息（借鉴 glados.js 思路，不在深层回调直接发通知）
+let notifyTitle = "";
+let notifySubtitle = "";
+let notifyBody = "";
+
+// 统一通知入口
+function sendNotification(title, sub, body) {
+    // Surge原生通知
+    $notification.post(title, sub, body);
+    // bark兜底推送
+    if (BARK_KEY && BARK_KEY.length > 0) {
+        const url = `https://api.day.app/${BARK_KEY}/${encodeURIComponent(title)}?body=${encodeURIComponent(body)}`;
+        $httpClient.get(url, err => {
+            if(err) console.log("Bark推送异常:", err);
+        })
+    }
+}
 
 const ck = $request.headers['Authorization'] || $request.headers['authorization'];
 
 if (ck) {
     let uniqueId = ck;
-    // 尝试从 JWT 中提取稳定的 ID (id 或 crmId)
+    // JWT解析id
     try {
         const base64Url = ck.split('.')[1];
         const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
@@ -24,7 +43,7 @@ if (ck) {
 
     let accounts = JSON.parse($persistentStore.read(KEY_NAME) || "[]");
     const exists = accounts.find(a => a.uniqueId === uniqueId || a.ck === ck);
-    
+
     if (exists) {
         if (exists.ck !== ck) {
             exists.ck = ck;
@@ -35,28 +54,43 @@ if (ck) {
         $persistentStore.write(JSON.stringify(accounts), KEY_NAME);
     }
 
-    // 🚀 立刻开始同步（因为是单条数据，只有1KB，绝对不会超时！）
     const formatted = accounts.map(a => `${a.remark}@${a.ck}`).join("\n");
 
     $httpClient.get({ url: `${QL_URL}/open/auth/token?client_id=${CLIENT_ID}&client_secret=${CLIENT_SECRET}`, timeout: 5 }, function(err, resp, data) {
         if (err || !data) {
-            $notification.post("❌ CK同步青龙失败", "获取青龙token失败", `错误：${err || '返回数据为空'}`);
+            notifyTitle = "❌ CK同步青龙失败";
+            notifySubtitle = "获取青龙token失败";
+            notifyBody = err || "返回数据为空";
+            sendNotification(notifyTitle, notifySubtitle, notifyBody);
             return $done();
         }
         let qlToken;
-        try { qlToken = JSON.parse(data).data.token; } catch(e) {
-            $notification.post("❌ CK同步青龙失败", "解析青龙token出错", `异常：${e.message}`);
+        try {
+            qlToken = JSON.parse(data).data.token;
+        } catch(e) {
+            notifyTitle = "❌ CK同步青龙失败";
+            notifySubtitle = "解析青龙token出错";
+            notifyBody = e.message;
+            sendNotification(notifyTitle, notifySubtitle, notifyBody);
             return $done();
         }
 
         $httpClient.get({ url: `${QL_URL}/open/envs?searchValue=${ENV_NAME}`, headers: { "Authorization": "Bearer " + qlToken }, timeout: 5 }, function(err2, resp2, data2) {
             if (err2 || !data2) {
-                $notification.post("❌ CK同步青龙失败", "查询青龙环境变量失败", `错误：${err2 || '返回数据为空'}`);
+                notifyTitle = "❌ CK同步青龙失败";
+                notifySubtitle = "查询青龙环境变量失败";
+                notifyBody = err2 || "返回数据为空";
+                sendNotification(notifyTitle, notifySubtitle, notifyBody);
                 return $done();
             }
             let envs;
-            try { envs = JSON.parse(data2).data; } catch(e) {
-                $notification.post("❌ CK同步青龙失败", "解析环境变量列表出错", `异常：${e.message}`);
+            try {
+                envs = JSON.parse(data2).data;
+            } catch(e) {
+                notifyTitle = "❌ CK同步青龙失败";
+                notifySubtitle = "解析环境变量列表出错";
+                notifyBody = e.message;
+                sendNotification(notifyTitle, notifySubtitle, notifyBody);
                 return $done();
             }
 
@@ -64,20 +98,24 @@ if (ck) {
             const payload = { name: ENV_NAME, value: formatted, remarks: "Surge抓包同步" };
             if (method === "put") payload.id = envs[0].id;
 
-            $httpClient[method]({ 
-                url: `${QL_URL}/open/envs`, 
-                headers: { "Authorization": "Bearer " + qlToken, "Content-Type": "application/json" }, 
+            $httpClient[method]({
+                url: `${QL_URL}/open/envs`,
+                headers: { "Authorization": "Bearer " + qlToken, "Content-Type": "application/json" },
                 body: JSON.stringify(payload),
                 timeout: 5
             }, function(err3, resp3, data3) {
                 if (!err3 && resp3 && resp3.status === 200) {
-                    const notifyTitle = "康师傅CK同步成功 🎉";
-                    const notifySub = `已更新账号: ${exists ? exists.remark : accounts[accounts.length-1].remark}`;
-                    const notifyBody = `当前共 ${accounts.length} 个账号`;
-                    $notification.post(notifyTitle, notifySub, notifyBody);
+                    const accRemark = exists ? exists.remark : accounts[accounts.length - 1].remark;
+                    notifyTitle = "康师傅CK同步成功 🎉";
+                    notifySubtitle = `已更新账号: ${accRemark}`;
+                    notifyBody = `当前共 ${accounts.length} 个账号`;
                 } else {
-                    $notification.post("❌ CK同步青龙失败", "更新环境变量接口异常", `err:${err3}, status:${resp3?.status||'无'}`);
+                    notifyTitle = "❌ CK同步青龙失败";
+                    notifySubtitle = "更新环境变量接口异常";
+                    notifyBody = `err:${err3}, status:${resp3?.status||'无'}`;
                 }
+                // 在最内层回调末尾调用通知，再执行$done()，模仿glados处理时序
+                sendNotification(notifyTitle, notifySubtitle, notifyBody);
                 $done();
             });
         });
