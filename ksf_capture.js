@@ -1,5 +1,5 @@
 // ==========================================
-// 康师傅 抓包即同步到青龙（防止大数据超时版）
+// 康师傅 抓包即同步到青龙（防止大数据超时版）【Surge专用｜成功+失败通知】
 // ==========================================
 const QL_URL = "http://192.168.99.1:5700";
 const CLIENT_ID = "tGj6_OuEQFme"; 
@@ -39,14 +39,26 @@ if (ck) {
     const formatted = accounts.map(a => `${a.remark}@${a.ck}`).join("\n");
 
     $httpClient.get({ url: `${QL_URL}/open/auth/token?client_id=${CLIENT_ID}&client_secret=${CLIENT_SECRET}`, timeout: 5 }, function(err, resp, data) {
-        if (err || !data) return $done();
+        if (err || !data) {
+            $notification.post("❌ CK同步青龙失败", "获取青龙token失败", `错误：${err || '返回数据为空'}`);
+            return $done();
+        }
         let qlToken;
-        try { qlToken = JSON.parse(data).data.token; } catch(e) { return $done(); }
+        try { qlToken = JSON.parse(data).data.token; } catch(e) {
+            $notification.post("❌ CK同步青龙失败", "解析青龙token出错", `异常：${e.message}`);
+            return $done();
+        }
 
         $httpClient.get({ url: `${QL_URL}/open/envs?searchValue=${ENV_NAME}`, headers: { "Authorization": "Bearer " + qlToken }, timeout: 5 }, function(err2, resp2, data2) {
-            if (err2 || !data2) return $done();
+            if (err2 || !data2) {
+                $notification.post("❌ CK同步青龙失败", "查询青龙环境变量失败", `错误：${err2 || '返回数据为空'}`);
+                return $done();
+            }
             let envs;
-            try { envs = JSON.parse(data2).data; } catch(e) { return $done(); }
+            try { envs = JSON.parse(data2).data; } catch(e) {
+                $notification.post("❌ CK同步青龙失败", "解析环境变量列表出错", `异常：${e.message}`);
+                return $done();
+            }
 
             const method = envs && envs.length > 0 ? "put" : "post";
             const payload = { name: ENV_NAME, value: formatted, remarks: "Surge抓包同步" };
@@ -59,8 +71,12 @@ if (ck) {
                 timeout: 5
             }, function(err3, resp3, data3) {
                 if (!err3 && resp3 && resp3.status === 200) {
-                    // 同步成功，弹通知！
-                    $notify("康师傅CK同步成功 🎉", `已更新账号: ${exists ? exists.remark : accounts[accounts.length-1].remark}`, `当前共 ${accounts.length} 个账号`);
+                    const notifyTitle = "康师傅CK同步成功 🎉";
+                    const notifySub = `已更新账号: ${exists ? exists.remark : accounts[accounts.length-1].remark}`;
+                    const notifyBody = `当前共 ${accounts.length} 个账号`;
+                    $notification.post(notifyTitle, notifySub, notifyBody);
+                } else {
+                    $notification.post("❌ CK同步青龙失败", "更新环境变量接口异常", `err:${err3}, status:${resp3?.status||'无'}`);
                 }
                 $done();
             });
