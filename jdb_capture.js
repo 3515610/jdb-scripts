@@ -1,16 +1,16 @@
-// 加多宝 抓包（极简版）
+// 加多宝 纯抓包（极简版，绝不卡顿）
 const KEY_NAME = "jdb_accounts";
-const ck = $request.headers['Authorization'] || $request.headers['authorization'];
+const apitoken = $request.headers['apitoken'] || $request.headers['APITOKEN'];
+const unique = $request.headers['unique_identity'] || $request.headers['UNIQUE_IDENTITY'];
 
-if (ck) {
+if (apitoken && unique) {
     let accounts = JSON.parse($persistentStore.read(KEY_NAME) || "[]");
-    // 直接使用完整 ck 字符串去重
-    const existsIndex = accounts.findIndex(a => a.ck === ck);
+    const exists = accounts.find(a => a.unique === unique);
     
-    if (existsIndex !== -1) {
-        accounts[existsIndex].ck = ck; // 更新
+    if (exists) {
+        exists.token = apitoken;
     } else {
-        accounts.push({ ck: ck, remark: `账号${accounts.length + 1}` });
+        accounts.push({ token: apitoken, unique: unique, remark: `账号${accounts.length + 1}` });
     }
     $persistentStore.write(JSON.stringify(accounts), KEY_NAME);
 }
