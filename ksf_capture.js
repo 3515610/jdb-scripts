@@ -1,5 +1,5 @@
 // ==========================================
-// 康师傅 抓包即同步到青龙｜借鉴glados消息缓存模式 Surge专用｜原生通知+Bark兜底双推送
+// 康师傅 抓包即同步到青龙｜借鉴glados消息缓存模式 Surge专用｜修复重复通知
 // ==========================================
 const QL_URL = "http://192.168.99.1:5700";
 const CLIENT_ID = "tGj6_OuEQFme";
@@ -8,7 +8,7 @@ const ENV_NAME = "kangshifu_zh";
 const KEY_NAME = "ksf_accounts";
 const BARK_KEY = ""; //填写你的bark密钥，留空则不启用bark
 
-// 缓存通知消息（借鉴 glados.js 思路，不在深层回调直接发通知）
+// 缓存通知消息
 let notifyTitle = "";
 let notifySubtitle = "";
 let notifyBody = "";
@@ -19,7 +19,7 @@ function sendNotification(title, sub, body) {
     $notification.post(title, sub, body);
     // bark兜底推送
     if (BARK_KEY && BARK_KEY.length > 0) {
-        const url = `https://api.day.app/${BARK_KEY}/${encodeURIComponent(title)}?body=${encodeURIComponent(body)}`;
+        const url = `https://api.day.app/${encodeURIComponent(title)}?body=${encodeURIComponent(body)}`;
         $httpClient.get(url, err => {
             if(err) console.log("Bark推送异常:", err);
         })
@@ -44,15 +44,20 @@ if (ck) {
     let accounts = JSON.parse($persistentStore.read(KEY_NAME) || "[]");
     const exists = accounts.find(a => a.uniqueId === uniqueId || a.ck === ck);
 
+    // ========== 新增判断：CK完全不变就直接退出，不执行同步、不弹通知 ==========
+    if(exists && exists.ck === ck){
+        // CK无更新，直接结束，不触发通知
+        $done();
+    }
+
+    let isNewAccount = false;
     if (exists) {
-        if (exists.ck !== ck) {
-            exists.ck = ck;
-            $persistentStore.write(JSON.stringify(accounts), KEY_NAME);
-        }
+        exists.ck = ck;
     } else {
         accounts.push({ ck: ck, remark: `账号${accounts.length + 1}`, uniqueId: uniqueId });
-        $persistentStore.write(JSON.stringify(accounts), KEY_NAME);
+        isNewAccount = true;
     }
+    $persistentStore.write(JSON.stringify(accounts), KEY_NAME);
 
     const formatted = accounts.map(a => `${a.remark}@${a.ck}`).join("\n");
 
@@ -114,7 +119,6 @@ if (ck) {
                     notifySubtitle = "更新环境变量接口异常";
                     notifyBody = `err:${err3}, status:${resp3?.status||'无'}`;
                 }
-                // 在最内层回调末尾调用通知，再执行$done()，模仿glados处理时序
                 sendNotification(notifyTitle, notifySubtitle, notifyBody);
                 $done();
             });
