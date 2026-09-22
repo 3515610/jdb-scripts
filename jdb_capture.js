@@ -1,13 +1,18 @@
-// Surge版 加多宝CK捕获脚本（增加系统通知）
+// Surge版 加多宝CK捕获脚本 http-request 兼容版
 const KEY_NAME = "jdb_accounts";
 const token = $request.headers['apitoken'] || $request.headers['APITOKEN'];
 const unique = $request.headers['unique_identity'] || $request.headers['UNIQUE_IDENTITY'];
+
+console.log("🔍 加多宝捕获脚本触发");
+console.log(`token=${token}, unique=${unique}`);
 
 if (token && unique) {
   let accountsStr = $persistentStore.read(KEY_NAME);
   let accounts = [];
   if (accountsStr) {
-    try { accounts = JSON.parse(accountsStr); } catch(e) {}
+    try { accounts = JSON.parse(accountsStr); } catch(e) {
+      console.log("❌ 解析存储失败", e);
+    }
   }
   if (!Array.isArray(accounts)) accounts = [];
 
@@ -23,8 +28,8 @@ if (token && unique) {
   }
 
   $persistentStore.write(JSON.stringify(accounts), KEY_NAME);
-  console.log(`${tipText}，当前共 ${accounts.length} 个`);
-  // ========== Surge系统通知 ==========
+  console.log(`${tipText}，当前共 ${accounts.length} 个账号`);
+  // 移除第四个sound参数，只用基础三参数，http-request兼容性更好
   $notification.post("加多宝CK捕获", tipText, `账号总数：${accounts.length}`);
 }
 $done({});
