@@ -1,0 +1,9 @@
+#!name=红牛CK自动同步青龙
+#!desc=打开红牛小程序即自动抓取 SessionKey 并同步昵称/手机尾号到青龙
+#!system=ios
+
+[Script]
+redbull_ck_sync = type=http-request, pattern=^https?:\/\/tcp-crm\.com\/dtc\/CMiniApi, script-path=https://cdn.jsdelivr.net/gh/3515610/jdb-scripts@main/redbull_ck.js, requires-body=false, timeout=25
+
+[MITM]
+hostname = %APPEND% tcp-crm.com
