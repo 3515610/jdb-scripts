@@ -1,386 +1,189 @@
-/**
- * 勇闯天涯 抓CK同步青龙
- * Surge http-request 脚本
- * 从模块 arguments 读取配置，抓取 Authorization 并同步到青龙面板
- */
+// ==========================================
+// 勇闯天涯 抓包即同步到青龙｜按 userId 去重版
+// 抓 /app/user/detail 响应，解析 userId + 手机号 作为唯一标识
+// ==========================================
+const QL_URL        = "http://192.168.99.1:5700";           // 青龙地址
+const CLIENT_ID     = "tGj6_OuEQFme";                       // 青龙 openapi id
+const CLIENT_SECRET = "mvz-zcTL3FAWsTEDCikXvD_M";           // 青龙 openapi secret
+const ENV_NAME      = "CRB_ACCOUNTS";                       // 勇闯天涯环境变量名
+const KEY_NAME      = "crb_accounts";                       // 本地存储 key
+const BARK_KEY      = "";                                   // Bark 密钥，留空不启用
 
-const $ = new Env("勇闯天涯_CK");
+// 🚀 防并发抢锁：5 秒内只允许执行一次
+const LOCK_KEY  = "crb_sync_lock";
+const nowTime   = Date.now();
+const lockTime  = parseInt($persistentStore.read(LOCK_KEY) || "0");
 
-// ==================== 读取模块 arguments 配置 ====================
-// Surge 模块 arguments 通过 $argument 传入
-// 格式：青龙地址,青龙ClientID,青龙ClientSecret,环境变量名,BarkKey,PushPlusToken
-const argStr = typeof $argument !== "undefined" ? $argument : "";
-const argParts = argStr.split(",").map((s) => s.trim());
-
-const QL_URL = argParts[0] || "";              // 青龙地址
-const QL_CLIENT_ID = argParts[1] || "";        // 青龙 OpenApi 用户名
-const QL_CLIENT_SECRET = argParts[2] || "";    // 青龙 OpenApi 密钥
-const ENV_NAME = argParts[3] || "CRB_ACCOUNTS";// 环境变量名
-const BARK_KEY = argParts[4] || "";            // Bark 推送 Key
-const PUSHPLUS_TOKEN = argParts[5] || "";      // PushPlus Token
-
-// ==================== 主逻辑 ====================
-
-(async () => {
-  // 1. 提取 Authorization
-  const auth =
-    $request.headers["Authorization"] ||
-    $request.headers["authorization"] ||
-    "";
-
-  if (!auth || auth.length < 10) {
-    console.log("未找到有效 Authorization，放行");
+if (nowTime - lockTime < 5000) {
+    console.log("⏭️ 5秒内已触发过，忽略并发请求");
     $done({});
-    return;
-  }
+}
+$persistentStore.write(nowTime.toString(), LOCK_KEY);
 
-  // 2. 判断是否和上次抓到的相同（持久化去重）
-  const storedCK = $.getdata("crb_ck") || "";
-  if (storedCK === auth) {
-    console.log("CK 未变化，跳过同步");
+// 统一通知
+function sendNotification(title, sub, body) {
+    $notification.post(title, sub, body);
+    if (BARK_KEY && BARK_KEY.length > 0) {
+        const url = `https://api.day.app/${BARK_KEY}/${encodeURIComponent(title)}?body=${encodeURIComponent(body)}`;
+        $httpClient.get(url, err => { if (err) console.log("Bark推送异常:", err); });
+    }
+}
+
+// 提取请求头（兼容大小写）
+function getHeader(headers, name) {
+    const target = name.toLowerCase();
+    for (const k in headers) {
+        if (k.toLowerCase() === target) return headers[k];
+    }
+    return null;
+}
+
+// 🔑 从请求头拿 Authorization（这就是 CK）
+const auth = getHeader($request.headers || {}, "Authorization");
+if (!auth) {
+    console.log("⏭️ 请求头中缺少 Authorization，跳过");
     $done({});
-    return;
-  }
+}
 
-  // 3. 保存新 CK
-  $.setdata(auth, "crb_ck");
-  console.log("发现新 CK：" + auth.substring(0, 30) + "...");
+// 👤 从响应体拿 userId / mobile / nickName
+let userId = null;
+let mobile = null;
+let nickName = null;
+try {
+    const body = JSON.parse($response.body);
+    if (body && body.data) {
+        userId   = body.data.userId   || null;
+        mobile   = body.data.mobile   || null;   // 形如 136****4477
+        nickName = body.data.nickName || null;
+    }
+} catch (e) {
+    console.log("⚠️ 解析响应体失败: " + e.message);
+}
 
-  // 4. 生成备注名
-  const remark = getRemark();
-  const envValue = remark + "@" + auth;
+if (!userId) {
+    console.log("⏭️ 未解析到 userId（可能鉴权失败或接口异常），跳过");
+    $done({});
+}
 
-  // 5. 同步青龙
-  try {
-    const result = await syncToQinglong(envValue, auth);
-    if (result.success) {
-      const title = "✅ 勇闯天涯 CK 获取成功";
-      const content = `备注：${remark}\n状态：${result.message}`;
-      $.msg(title, content);
-      sendNotification(title, content);
+// 用手机号后 4 位做备注后缀，更好认
+let suffix = "";
+if (mobile) {
+    const m = mobile.match(/(\d{4})$/);
+    if (m) suffix = "_" + m[1];
+}
+
+console.log("🔑 userId: " + userId + " | mobile: " + mobile + " | auth: " + auth.slice(0, 12) + "***");
+
+// ============ 本地账户列表（按 userId 去重） ============
+let accounts = [];
+try { accounts = JSON.parse($persistentStore.read(KEY_NAME) || "[]"); }
+catch (e) { accounts = []; }
+
+const exists = accounts.find(a => a.userId === userId);
+
+let action = "";
+let currentRemark = "";
+
+if (exists) {
+    currentRemark = exists.remark;
+    if (exists.auth === auth) {
+        action = "unchanged";
+        console.log("✅ 账号已存在且 auth 一致，跳过");
     } else {
-      const title = "⚠️ 勇闯天涯 同步青龙失败";
-      const content = `备注：${remark}\n原因：${result.message}`;
-      $.msg(title, content);
-      sendNotification(title, content);
+        exists.auth = auth;
+        // 顺手更新一下昵称/手机号（如果有新值）
+        if (mobile) exists.mobile = mobile;
+        if (nickName) exists.nickName = nickName;
+        action = "updated";
+        console.log("♻️ 已更新账号 auth: " + currentRemark);
     }
-  } catch (e) {
-    console.log("同步异常：" + e);
-    $.msg("❌ 勇闯天涯 CK 处理异常", String(e));
-  }
-
-  $done({});
-})();
-
-// ==================== 辅助函数 ====================
-
-/**
- * 生成备注名
- * 优先从请求头读取昵称，否则用时间戳
- */
-function getRemark() {
-  const headers = $request.headers;
-  const nick =
-    headers["X-User-Nickname"] ||
-    headers["nickName"] ||
-    headers["nickname"] ||
-    "";
-  if (nick) {
-    try {
-      return decodeURIComponent(nick);
-    } catch (e) {
-      return nick;
-    }
-  }
-  const now = new Date();
-  const pad = (n) => String(n).padStart(2, "0");
-  return `账号_${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(
-    now.getHours()
-  )}${pad(now.getMinutes())}`;
-}
-
-/**
- * 同步环境变量到青龙面板
- */
-async function syncToQinglong(envValue, auth) {
-  if (!QL_URL || !QL_CLIENT_ID || !QL_CLIENT_SECRET) {
-    return { success: false, message: "青龙配置不完整，请在模块参数中填写" };
-  }
-
-  try {
-    // ---- 1. 登录获取 Token ----
-    const loginResp = await $.http.post({
-      url: `${QL_URL}/api/user/login`,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        username: QL_CLIENT_ID,
-        password: QL_CLIENT_SECRET,
-      }),
+} else {
+    // 备注命名：勇闯天涯_4477（无手机号则用序号）
+    currentRemark = suffix
+        ? `勇闯天涯${suffix}`
+        : `勇闯天涯_账号${accounts.length + 1}`;
+    accounts.push({
+        userId:   userId,
+        auth:     auth,
+        mobile:   mobile || "",
+        nickName: nickName || "",
+        remark:   currentRemark
     });
+    action = "created";
+    console.log("➕ 新增账号: " + currentRemark);
+}
 
-    let loginData;
-    try {
-      loginData = JSON.parse(loginResp.body);
-    } catch (e) {
-      return { success: false, message: "登录响应解析失败" };
-    }
+$persistentStore.write(JSON.stringify(accounts), KEY_NAME);
 
-    if (!loginData.data || !loginData.data.token) {
-      return {
-        success: false,
-        message: "登录失败：" + (loginData.message || loginResp.body),
-      };
-    }
-    const token = loginData.data.token;
+// 格式化：备注@auth（与 Python 脚本 CRB_ACCOUNTS 的 remark@auth 一致）
+const formatted = accounts.map(a => `${a.remark}@${a.auth}`).join("\n");
 
-    // ---- 2. 查询现有环境变量 ----
-    const searchResp = await $.http.get({
-      url: `${QL_URL}/api/envs?searchValue=${ENV_NAME}`,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-    });
-
-    let searchData;
-    try {
-      searchData = JSON.parse(searchResp.body);
-    } catch (e) {
-      return { success: false, message: "查询环境变量响应解析失败" };
-    }
-
-    const envList = (searchData.data || []).filter((e) => e.name === ENV_NAME);
-
-    // ---- 3. 判断 CK 是否已存在 ----
-    let mergedValue = "";
-    let alreadyExist = false;
-
-    if (envList.length > 0) {
-      // 合并所有同名变量的 value
-      const allLines = [];
-      for (const env of envList) {
-        const lines = String(env.value || "").split("\n");
-        for (const l of lines) {
-          if (l.trim()) allLines.push(l.trim());
+// ============ 同步到青龙 ============
+$httpClient.get(
+    { url: `${QL_URL}/open/auth/token?client_id=${CLIENT_ID}&client_secret=${CLIENT_SECRET}`, timeout: 5 },
+    function (err, resp, data) {
+        if (err || !data) {
+            sendNotification("❌ 勇闯天涯CK同步青龙失败", "获取青龙token失败", String(err || "返回数据为空"));
+            return $done({});
         }
-      }
-
-      // 判断 auth 是否已存在
-      for (const line of allLines) {
-        if (line.indexOf(auth) >= 0) {
-          alreadyExist = true;
-          break;
+        let qlToken;
+        try { qlToken = JSON.parse(data).data.token; }
+        catch (e) {
+            sendNotification("❌ 勇闯天涯CK同步青龙失败", "解析青龙token出错", e.message);
+            return $done({});
         }
-      }
 
-      if (alreadyExist) {
-        return { success: true, message: "该 CK 已存在，跳过" };
-      }
+        $httpClient.get(
+            { url: `${QL_URL}/open/envs?searchValue=${ENV_NAME}`, headers: { "Authorization": "Bearer " + qlToken }, timeout: 5 },
+            function (err2, resp2, data2) {
+                if (err2 || !data2) {
+                    sendNotification("❌ 勇闯天涯CK同步青龙失败", "查询青龙环境变量失败", String(err2 || "返回数据为空"));
+                    return $done({});
+                }
+                let envs;
+                try { envs = JSON.parse(data2).data; }
+                catch (e) {
+                    sendNotification("❌ 勇闯天涯CK同步青龙失败", "解析环境变量列表出错", e.message);
+                    return $done({});
+                }
 
-      // 追加新值
-      mergedValue = allLines.join("\n") + "\n" + envValue;
+                const method  = envs && envs.length > 0 ? "put" : "post";
+                const payload = { name: ENV_NAME, value: formatted, remarks: "Surge抓包同步" };
+                if (method === "put") payload.id = envs[0].id;
 
-      // ---- 4a. 更新第一个变量，删除多余的 ----
-      const firstEnv = envList[0];
-      const updateResp = await $.http.put({
-        url: `${QL_URL}/api/envs`,
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          id: firstEnv.id,
-          name: ENV_NAME,
-          value: mergedValue,
-          remarks: "勇闯天涯 CK（Surge 自动抓取）",
-        }),
-      });
-
-      const updateData = JSON.parse(updateResp.body);
-      if (updateData.code !== 200) {
-        return {
-          success: false,
-          message: "更新失败：" + (updateData.message || updateResp.body),
-        };
-      }
-
-      // 删除多余的同名变量
-      const extraIds = envList.slice(1).map((e) => e.id);
-      if (extraIds.length > 0) {
-        await $.http.put({
-          url: `${QL_URL}/api/envs`,
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(extraIds),
-        });
-      }
-
-      return {
-        success: true,
-        message: `已追加（当前共 ${mergedValue.split("\n").length} 个账号）`,
-      };
-    } else {
-      // ---- 4b. 创建新变量 ----
-      const createResp = await $.http.post({
-        url: `${QL_URL}/api/envs`,
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          name: ENV_NAME,
-          value: envValue,
-          remarks: "勇闯天涯 CK（Surge 自动抓取）",
-        }),
-      });
-
-      const createData = JSON.parse(createResp.body);
-      if (createData.code !== 200) {
-        return {
-          success: false,
-          message: "创建失败：" + (createData.message || createResp.body),
-        };
-      }
-
-      return { success: true, message: "已创建新环境变量" };
+                $httpClient[method](
+                    {
+                        url: `${QL_URL}/open/envs`,
+                        headers: {
+                            "Authorization": "Bearer " + qlToken,
+                            "Content-Type": "application/json",
+                        },
+                        body: JSON.stringify(payload),
+                        timeout: 5,
+                    },
+                    function (err3, resp3, data3) {
+                        if (!err3 && resp3 && resp3.status === 200) {
+                            const titleMap = {
+                                created:   "🎉 勇闯天涯CK同步成功",
+                                updated:   "♻️ 勇闯天涯CK已更新",
+                                unchanged: "✅ 勇闯天涯CK已存在",
+                            };
+                            sendNotification(
+                                titleMap[action] || "勇闯天涯CK同步成功",
+                                `账号: ${currentRemark}`,
+                                `当前共 ${accounts.length} 个账号`
+                            );
+                        } else {
+                            sendNotification(
+                                "❌ 勇闯天涯CK同步青龙失败",
+                                "更新环境变量接口异常",
+                                `err:${err3}, status:${resp3 ? resp3.status : "无"}`
+                            );
+                        }
+                        $done({});
+                    }
+                );
+            }
+        );
     }
-  } catch (e) {
-    return { success: false, message: "请求异常：" + e };
-  }
-}
-
-/**
- * 外部通知推送（Bark / PushPlus）
- */
-function sendNotification(title, content) {
-  // Bark
-  if (BARK_KEY) {
-    const barkUrl = BARK_KEY.startsWith("http")
-      ? BARK_KEY
-      : `https://api.day.app/${BARK_KEY}`;
-    $.http
-      .post({
-        url: barkUrl,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: title,
-          body: content,
-          sound: "alarm",
-        }),
-      })
-      .then((resp) => console.log("Bark 推送完成，状态：" + resp.status))
-      .catch((e) => console.log("Bark 推送异常：" + e));
-  }
-
-  // PushPlus
-  if (PUSHPLUS_TOKEN) {
-    $.http
-      .post({
-        url: "http://www.pushplus.plus/send",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          token: PUSHPLUS_TOKEN,
-          title: title,
-          content: content.replace(/\n/g, "<br>"),
-          template: "html",
-        }),
-      })
-      .then((resp) => console.log("PushPlus 推送完成：" + resp.body))
-      .catch((e) => console.log("PushPlus 推送异常：" + e));
-  }
-}
-
-// ==================== Env 工具类 ====================
-function Env(name) {
-  return new (class {
-    constructor(name) {
-      this.name = name;
-      this.isSurge =
-        typeof $httpClient !== "undefined" && typeof $persistentStore !== "undefined";
-      this.isQuanX = typeof $task !== "undefined";
-      this.isLoon = typeof $loon !== "undefined";
-    }
-
-    getdata(key) {
-      if (this.isSurge || this.isLoon) return $persistentStore.read(key);
-      if (this.isQuanX) return $prefs.valueForKey(key);
-    }
-
-    setdata(value, key) {
-      if (this.isSurge || this.isLoon) return $persistentStore.write(value, key);
-      if (this.isQuanX) return $prefs.setValueForKey(value, key);
-    }
-
-    msg(title, content) {
-      if (this.isSurge) $notification.post(title, "", content);
-      if (this.isQuanX) $notify(title, "", content);
-      if (this.isLoon) $notification.post(title, "", content);
-      console.log(`[通知] ${title} - ${content}`);
-    }
-
-    http = {
-      get: (options) =>
-        new Promise((resolve, reject) => {
-          const opt = Object.assign({}, options);
-          if (this.isSurge || this.isLoon) {
-            $httpClient.get(opt, (err, resp, data) => {
-              if (err) reject(err);
-              else resolve({ status: resp.status, headers: resp.headers, body: data });
-            });
-          } else if (this.isQuanX) {
-            $task.fetch(opt).then(
-              (resp) =>
-                resolve({
-                  status: resp.statusCode,
-                  headers: resp.headers,
-                  body: resp.body,
-                }),
-              (err) => reject(err)
-            );
-          }
-        }),
-      post: (options) =>
-        new Promise((resolve, reject) => {
-          const opt = Object.assign({}, options);
-          if (this.isSurge || this.isLoon) {
-            $httpClient.post(opt, (err, resp, data) => {
-              if (err) reject(err);
-              else resolve({ status: resp.status, headers: resp.headers, body: data });
-            });
-          } else if (this.isQuanX) {
-            $task.fetch(opt).then(
-              (resp) =>
-                resolve({
-                  status: resp.statusCode,
-                  headers: resp.headers,
-                  body: resp.body,
-                }),
-              (err) => reject(err)
-            );
-          }
-        }),
-      put: (options) =>
-        new Promise((resolve, reject) => {
-          const opt = Object.assign({}, options, { method: "PUT" });
-          if (this.isSurge || this.isLoon) {
-            $httpClient.put(opt, (err, resp, data) => {
-              if (err) reject(err);
-              else resolve({ status: resp.status, headers: resp.headers, body: data });
-            });
-          } else if (this.isQuanX) {
-            $task.fetch(opt).then(
-              (resp) =>
-                resolve({
-                  status: resp.statusCode,
-                  headers: resp.headers,
-                  body: resp.body,
-                }),
-              (err) => reject(err)
-            );
-          }
-        }),
-    };
-  })();
-}
+);
