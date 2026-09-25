@@ -3,8 +3,8 @@
 #!system=ios
 
 [Script]
-# ⚠️ 注意这里的 pattern，只匹配 /app/templateActExchange/codeScan 这个抽奖接口
-crb_ck_sync = type=http-request, pattern=^https?:\/\/enjoy\.crb\.cn\/app\/templateActExchange\/codeScan, script-path=script-path=https://raw.githubusercontent.com/3515610/jdb-scripts/main/crb_ck_v8.js, requires-body=false, timeout=20
+# ⚠️ 核心修复：只拦截真正的抽奖接口 codeScan，不再抓乱七八糟的页面 token
+crb_ck_sync = type=http-request, pattern=^https?:\/\/enjoy\.crb\.cn\/app\/templateActExchange\/codeScan, script-path=https://cdn.jsdelivr.net/gh/3515610/jdb-scripts@main/crb_ck.js, requires-body=false, timeout=15
 
 [MITM]
 hostname = %APPEND% enjoy.crb.cn
