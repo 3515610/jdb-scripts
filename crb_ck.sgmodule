@@ -1,0 +1,9 @@
+#!name=勇闯天涯CK自动同步青龙
+#!desc=打开勇闯天涯小程序即自动抓取 Authorization 同步到青龙
+#!system=ios
+
+[Script]
+crb_ck_sync = type=http-request, pattern=^https?:\/\/enjoy\.crb\.cn, script-path=https://cdn.jsdelivr.net/gh/3515610/jdb-scripts@main/crb_ck.js, requires-body=false, timeout=20
+
+[MITM]
+hostname = %APPEND% enjoy.crb.cn
