@@ -1,106 +1,115 @@
 /**
  * 勇闯天涯 抓CK同步青龙
  * Surge http-request 脚本
- * 用于抓取雪花勇闯天涯小程序的 Authorization 并同步到青龙面板
+ * 从模块 arguments 读取配置，抓取 Authorization 并同步到青龙面板
  */
-
-// ==================== 用户配置区 ====================
-
-// 青龙面板配置
-const QL_URL = "http://你的青龙IP:5700";       // 青龙面板地址，不要带末尾斜杠
-const QL_CLIENT_ID = "你的OpenApi用户名";       // 青龙 OpenApi 用户名（通常为 admin）
-const QL_CLIENT_SECRET = "你的OpenApi密钥";     // 青龙 OpenApi 密钥
-const ENV_NAME = "CRB_ACCOUNTS";                // 环境变量名称，与 Python 脚本中的一致
-
-// 通知配置（可留空不填）
-const BARK_KEY = "";              // Bark 推送 Key，留空不推送
-const PUSHPLUS_TOKEN = "";        // PushPlus Token，留空不推送
-
-// ==================== 配置区结束 ====================
 
 const $ = new Env("勇闯天涯_CK");
 
-// 获取请求头中的 Authorization（即 CK）
-const auth = $request.headers["Authorization"] || $request.headers["authorization"] || "";
+// ==================== 读取模块 arguments 配置 ====================
+// Surge 模块 arguments 通过 $argument 传入
+// 格式：青龙地址,青龙ClientID,青龙ClientSecret,环境变量名,BarkKey,PushPlusToken
+const argStr = typeof $argument !== "undefined" ? $argument : "";
+const argParts = argStr.split(",").map((s) => s.trim());
 
-if (!auth) {
-  // 没有 Authorization，直接放行
-  $done({});
-} else {
-  // 使用持久化存储避免重复抓取同一个 CK
+const QL_URL = argParts[0] || "";              // 青龙地址
+const QL_CLIENT_ID = argParts[1] || "";        // 青龙 OpenApi 用户名
+const QL_CLIENT_SECRET = argParts[2] || "";    // 青龙 OpenApi 密钥
+const ENV_NAME = argParts[3] || "CRB_ACCOUNTS";// 环境变量名
+const BARK_KEY = argParts[4] || "";            // Bark 推送 Key
+const PUSHPLUS_TOKEN = argParts[5] || "";      // PushPlus Token
+
+// ==================== 主逻辑 ====================
+
+(async () => {
+  // 1. 提取 Authorization
+  const auth =
+    $request.headers["Authorization"] ||
+    $request.headers["authorization"] ||
+    "";
+
+  if (!auth || auth.length < 10) {
+    console.log("未找到有效 Authorization，放行");
+    $done({});
+    return;
+  }
+
+  // 2. 判断是否和上次抓到的相同（持久化去重）
   const storedCK = $.getdata("crb_ck") || "";
-
   if (storedCK === auth) {
-    // CK 未变化，跳过同步
     console.log("CK 未变化，跳过同步");
     $done({});
-  } else {
-    // 新 CK，保存并同步
-    $.setdata(auth, "crb_ck");
-
-    // 备注名：从请求头中尝试获取昵称，若无则使用时间戳
-    const remark = getRemark();
-
-    // 组装环境变量值，格式：备注名@ck
-    const envValue = remark + "@" + auth;
-
-    // 同步到青龙
-    syncToQinglong(envValue).then((result) => {
-      if (result) {
-        $.msg(
-          "✅ 勇闯天涯 CK 获取成功",
-          `备注：${remark}\nCK：${auth.substring(0, 30)}...\n已同步至青龙面板`
-        );
-        sendNotification("✅ 勇闯天涯 CK 获取成功", `备注：${remark}\n已同步至青龙面板`);
-      } else {
-        $.msg("⚠️ 勇闯天涯 CK 已获取，但同步青龙失败", `CK：${auth.substring(0, 30)}...\n请检查青龙配置`);
-        sendNotification("⚠️ 勇闯天涯 同步失败", `CK 已抓取但同步青龙失败`);
-      }
-      $done({});
-    });
+    return;
   }
-}
+
+  // 3. 保存新 CK
+  $.setdata(auth, "crb_ck");
+  console.log("发现新 CK：" + auth.substring(0, 30) + "...");
+
+  // 4. 生成备注名
+  const remark = getRemark();
+  const envValue = remark + "@" + auth;
+
+  // 5. 同步青龙
+  try {
+    const result = await syncToQinglong(envValue, auth);
+    if (result.success) {
+      const title = "✅ 勇闯天涯 CK 获取成功";
+      const content = `备注：${remark}\n状态：${result.message}`;
+      $.msg(title, content);
+      sendNotification(title, content);
+    } else {
+      const title = "⚠️ 勇闯天涯 同步青龙失败";
+      const content = `备注：${remark}\n原因：${result.message}`;
+      $.msg(title, content);
+      sendNotification(title, content);
+    }
+  } catch (e) {
+    console.log("同步异常：" + e);
+    $.msg("❌ 勇闯天涯 CK 处理异常", String(e));
+  }
+
+  $done({});
+})();
 
 // ==================== 辅助函数 ====================
 
 /**
- * 尝试从请求头中提取备注名
+ * 生成备注名
+ * 优先从请求头读取昵称，否则用时间戳
  */
 function getRemark() {
-  // 雪花勇闯天涯的请求头中可能包含用户信息
   const headers = $request.headers;
-  // 尝试从常见字段获取
-  const nickName =
+  const nick =
     headers["X-User-Nickname"] ||
     headers["nickName"] ||
     headers["nickname"] ||
     "";
-
-  if (nickName) {
-    return decodeURIComponent(nickName);
+  if (nick) {
+    try {
+      return decodeURIComponent(nick);
+    } catch (e) {
+      return nick;
+    }
   }
-
-  // 无昵称时，用时间戳作为备注名
   const now = new Date();
-  const mm = String(now.getMonth() + 1).padStart(2, "0");
-  const dd = String(now.getDate()).padStart(2, "0");
-  const hh = String(now.getHours()).padStart(2, "0");
-  const mi = String(now.getMinutes()).padStart(2, "0");
-  return `账号_${mm}${dd}${hh}${mi}`;
+  const pad = (n) => String(n).padStart(2, "0");
+  return `账号_${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(
+    now.getHours()
+  )}${pad(now.getMinutes())}`;
 }
 
 /**
  * 同步环境变量到青龙面板
  */
-async function syncToQinglong(envValue) {
+async function syncToQinglong(envValue, auth) {
   if (!QL_URL || !QL_CLIENT_ID || !QL_CLIENT_SECRET) {
-    console.log("青龙配置不完整，跳过同步");
-    return false;
+    return { success: false, message: "青龙配置不完整，请在模块参数中填写" };
   }
 
   try {
-    // 1. 获取 Token
-    const tokenResp = await $.http.get({
+    // ---- 1. 登录获取 Token ----
+    const loginResp = await $.http.post({
       url: `${QL_URL}/api/user/login`,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -109,15 +118,23 @@ async function syncToQinglong(envValue) {
       }),
     });
 
-    const tokenData = JSON.parse(tokenResp.body);
-    if (!tokenData.data || !tokenData.data.token) {
-      console.log("青龙登录失败：", tokenResp.body);
-      return false;
+    let loginData;
+    try {
+      loginData = JSON.parse(loginResp.body);
+    } catch (e) {
+      return { success: false, message: "登录响应解析失败" };
     }
-    const token = tokenData.data.token;
 
-    // 2. 获取现有环境变量
-    const envResp = await $.http.get({
+    if (!loginData.data || !loginData.data.token) {
+      return {
+        success: false,
+        message: "登录失败：" + (loginData.message || loginResp.body),
+      };
+    }
+    const token = loginData.data.token;
+
+    // ---- 2. 查询现有环境变量 ----
+    const searchResp = await $.http.get({
       url: `${QL_URL}/api/envs?searchValue=${ENV_NAME}`,
       headers: {
         Authorization: `Bearer ${token}`,
@@ -125,33 +142,46 @@ async function syncToQinglong(envValue) {
       },
     });
 
-    const envData = JSON.parse(envResp.body);
-    let existingEnvs = envData.data || [];
+    let searchData;
+    try {
+      searchData = JSON.parse(searchResp.body);
+    } catch (e) {
+      return { success: false, message: "查询环境变量响应解析失败" };
+    }
 
-    // 3. 判断是否已存在该 CK 的环境变量
-    let found = false;
-    for (const env of existingEnvs) {
-      if (env.name === ENV_NAME && env.value === envValue) {
-        found = true;
-        break;
+    const envList = (searchData.data || []).filter((e) => e.name === ENV_NAME);
+
+    // ---- 3. 判断 CK 是否已存在 ----
+    let mergedValue = "";
+    let alreadyExist = false;
+
+    if (envList.length > 0) {
+      // 合并所有同名变量的 value
+      const allLines = [];
+      for (const env of envList) {
+        const lines = String(env.value || "").split("\n");
+        for (const l of lines) {
+          if (l.trim()) allLines.push(l.trim());
+        }
       }
-    }
 
-    if (found) {
-      console.log("该 CK 已存在于青龙中，跳过");
-      return true;
-    }
+      // 判断 auth 是否已存在
+      for (const line of allLines) {
+        if (line.indexOf(auth) >= 0) {
+          alreadyExist = true;
+          break;
+        }
+      }
 
-    // 4. 追加新环境变量
-    // 如果已有同名变量，需要合并（多账号）
-    let newValue = envValue;
-    const existingSameName = existingEnvs.filter((e) => e.name === ENV_NAME);
+      if (alreadyExist) {
+        return { success: true, message: "该 CK 已存在，跳过" };
+      }
 
-    if (existingSameName.length > 0) {
-      // 取第一个的值，追加新 CK
-      newValue = existingSameName[0].value + "\n" + envValue;
+      // 追加新值
+      mergedValue = allLines.join("\n") + "\n" + envValue;
 
-      // 更新
+      // ---- 4a. 更新第一个变量，删除多余的 ----
+      const firstEnv = envList[0];
       const updateResp = await $.http.put({
         url: `${QL_URL}/api/envs`,
         headers: {
@@ -159,17 +189,40 @@ async function syncToQinglong(envValue) {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          id: existingSameName[0].id,
+          id: firstEnv.id,
           name: ENV_NAME,
-          value: newValue,
+          value: mergedValue,
+          remarks: "勇闯天涯 CK（Surge 自动抓取）",
         }),
       });
 
       const updateData = JSON.parse(updateResp.body);
-      console.log("更新环境变量结果：", updateResp.body);
-      return updateData.code === 200;
+      if (updateData.code !== 200) {
+        return {
+          success: false,
+          message: "更新失败：" + (updateData.message || updateResp.body),
+        };
+      }
+
+      // 删除多余的同名变量
+      const extraIds = envList.slice(1).map((e) => e.id);
+      if (extraIds.length > 0) {
+        await $.http.put({
+          url: `${QL_URL}/api/envs`,
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(extraIds),
+        });
+      }
+
+      return {
+        success: true,
+        message: `已追加（当前共 ${mergedValue.split("\n").length} 个账号）`,
+      };
     } else {
-      // 创建新变量
+      // ---- 4b. 创建新变量 ----
       const createResp = await $.http.post({
         url: `${QL_URL}/api/envs`,
         headers: {
@@ -184,24 +237,32 @@ async function syncToQinglong(envValue) {
       });
 
       const createData = JSON.parse(createResp.body);
-      console.log("创建环境变量结果：", createResp.body);
-      return createData.code === 200;
+      if (createData.code !== 200) {
+        return {
+          success: false,
+          message: "创建失败：" + (createData.message || createResp.body),
+        };
+      }
+
+      return { success: true, message: "已创建新环境变量" };
     }
   } catch (e) {
-    console.log("同步青龙异常：", e);
-    return false;
+    return { success: false, message: "请求异常：" + e };
   }
 }
 
 /**
- * 发送通知（Bark / PushPlus）
+ * 外部通知推送（Bark / PushPlus）
  */
 function sendNotification(title, content) {
   // Bark
   if (BARK_KEY) {
+    const barkUrl = BARK_KEY.startsWith("http")
+      ? BARK_KEY
+      : `https://api.day.app/${BARK_KEY}`;
     $.http
       .post({
-        url: `https://api.day.app/${BARK_KEY}`,
+        url: barkUrl,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: title,
@@ -209,9 +270,7 @@ function sendNotification(title, content) {
           sound: "alarm",
         }),
       })
-      .then((resp) => {
-        console.log("Bark 推送：" + (resp.status === 200 ? "成功" : "失败"));
-      })
+      .then((resp) => console.log("Bark 推送完成，状态：" + resp.status))
       .catch((e) => console.log("Bark 推送异常：" + e));
   }
 
@@ -228,10 +287,7 @@ function sendNotification(title, content) {
           template: "html",
         }),
       })
-      .then((resp) => {
-        const data = JSON.parse(resp.body);
-        console.log("PushPlus 推送：" + (data.code === 200 ? "成功" : "失败"));
-      })
+      .then((resp) => console.log("PushPlus 推送完成：" + resp.body))
       .catch((e) => console.log("PushPlus 推送异常：" + e));
   }
 }
@@ -241,23 +297,29 @@ function Env(name) {
   return new (class {
     constructor(name) {
       this.name = name;
-      this.isSurge = typeof $httpClient !== "undefined";
+      this.isSurge =
+        typeof $httpClient !== "undefined" && typeof $persistentStore !== "undefined";
       this.isQuanX = typeof $task !== "undefined";
       this.isLoon = typeof $loon !== "undefined";
     }
+
     getdata(key) {
       if (this.isSurge || this.isLoon) return $persistentStore.read(key);
       if (this.isQuanX) return $prefs.valueForKey(key);
     }
+
     setdata(value, key) {
       if (this.isSurge || this.isLoon) return $persistentStore.write(value, key);
       if (this.isQuanX) return $prefs.setValueForKey(value, key);
     }
+
     msg(title, content) {
       if (this.isSurge) $notification.post(title, "", content);
       if (this.isQuanX) $notify(title, "", content);
       if (this.isLoon) $notification.post(title, "", content);
+      console.log(`[通知] ${title} - ${content}`);
     }
+
     http = {
       get: (options) =>
         new Promise((resolve, reject) => {
@@ -265,11 +327,16 @@ function Env(name) {
           if (this.isSurge || this.isLoon) {
             $httpClient.get(opt, (err, resp, data) => {
               if (err) reject(err);
-              else resolve({ status: resp.status, body: data });
+              else resolve({ status: resp.status, headers: resp.headers, body: data });
             });
           } else if (this.isQuanX) {
             $task.fetch(opt).then(
-              (resp) => resolve({ status: resp.statusCode, body: resp.body }),
+              (resp) =>
+                resolve({
+                  status: resp.statusCode,
+                  headers: resp.headers,
+                  body: resp.body,
+                }),
               (err) => reject(err)
             );
           }
@@ -280,11 +347,16 @@ function Env(name) {
           if (this.isSurge || this.isLoon) {
             $httpClient.post(opt, (err, resp, data) => {
               if (err) reject(err);
-              else resolve({ status: resp.status, body: data });
+              else resolve({ status: resp.status, headers: resp.headers, body: data });
             });
           } else if (this.isQuanX) {
             $task.fetch(opt).then(
-              (resp) => resolve({ status: resp.statusCode, body: resp.body }),
+              (resp) =>
+                resolve({
+                  status: resp.statusCode,
+                  headers: resp.headers,
+                  body: resp.body,
+                }),
               (err) => reject(err)
             );
           }
@@ -295,11 +367,16 @@ function Env(name) {
           if (this.isSurge || this.isLoon) {
             $httpClient.put(opt, (err, resp, data) => {
               if (err) reject(err);
-              else resolve({ status: resp.status, body: data });
+              else resolve({ status: resp.status, headers: resp.headers, body: data });
             });
           } else if (this.isQuanX) {
             $task.fetch(opt).then(
-              (resp) => resolve({ status: resp.statusCode, body: resp.body }),
+              (resp) =>
+                resolve({
+                  status: resp.statusCode,
+                  headers: resp.headers,
+                  body: resp.body,
+                }),
               (err) => reject(err)
             );
           }
@@ -307,6 +384,3 @@ function Env(name) {
     };
   })();
 }
-
-// 执行
-$done({});
