@@ -1,10 +1,8 @@
-#!name=勇闯天涯CK自动同步青龙
-#!desc=打开勇闯天涯小程序即自动抓取 Authorization 同步到青龙
-#!system=ios
+#!name=勇闯天涯 抓包 CK 同步青龙
+#!desc=打开勇闯天涯小程序时自动抓取 Authorization 并同步到青龙环境变量 CRB_ACCOUNTS
 
 [Script]
-# ⚠️ 核心修复：只拦截真正的抽奖接口 codeScan，不再抓乱七八糟的页面 token
-crb_ck_sync = type=http-request, pattern=^https?:\/\/enjoy\.crb\.cn\/app\/templateActExchange\/codeScan, script-path=https://cdn.jsdelivr.net/gh/3515610/jdb-scripts@main/crb_ck.js, requires-body=false, timeout=15
+勇闯天涯CK抓取 = type=http-request,pattern=^https?:\/\/enjoy\.crb\.cn\/app\/,requires-body=false,script-path=https://raw.githubusercontent.com/3515610/jdb-scripts/refs/heads/main/crb_ck.js,timeout=30
 
 [MITM]
-hostname = %APPEND% enjoy.crb.cn
+hostname = enjoy.crb.cn
