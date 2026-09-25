@@ -2,7 +2,7 @@
 #!desc=打开勇闯天涯小程序时自动抓取 Authorization 并同步到青龙环境变量 CRB_ACCOUNTS
 
 [Script]
-勇闯天涯CK抓取 = type=http-request,pattern=^https?:\/\/enjoy\.crb\.cn\/app\/,requires-body=false,script-path=https://raw.githubusercontent.com/3515610/jdb-scripts/refs/heads/main/crb_ck.js,timeout=30
+勇闯天涯CK抓取 = type=http-response,pattern=^https?:\/\/enjoy\.crb\.cn\/app\/user\/detail,requires-body=true,script-path=https://raw.githubusercontent.com/3515610/jdb-scripts/refs/heads/main/crb_ck.js,timeout=30
 
 [MITM]
 hostname = enjoy.crb.cn
