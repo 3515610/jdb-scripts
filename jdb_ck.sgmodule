@@ -1,0 +1,9 @@
+#!name=加多宝CK自动同步青龙
+#!desc=打开加多宝小程序即自动抓取 apitoken 和 unique_identity 同步到青龙
+#!system=ios
+
+[Script]
+jdb_ck_sync = type=http-request, pattern=^https?:\/\/api-mp\.jdbchina\.com, script-path=https://cdn.jsdelivr.net/gh/3515610/jdb-scripts@main/jdb_ck.js, requires-body=false, timeout=20
+
+[MITM]
+hostname = %APPEND% api-mp.jdbchina.com
