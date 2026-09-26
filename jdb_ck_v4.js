@@ -1,21 +1,15 @@
 // ==========================================
-// 加多宝 抓包同步青龙（多账号完美版 v3 - 保留自定义备注）
+// 加多宝 抓包同步青龙（多账号完美版 v4 - 彻底修复埋点抢锁Bug）
 // ==========================================
 const QL_URL        = "http://192.168.99.1:5700";           // ⚠️ 青龙地址
 const CLIENT_ID     = "tGj6_OuEQFme";                       // 青龙 openapi id
 const CLIENT_SECRET = "mvz-zcTL3FAWsTEDCikXvD_M";           // 青龙 openapi secret
 const ENV_NAME      = "JDBC_ACCOUNTS";                      // 加多宝环境变量名
-const KEY_NAME      = "jdb_accounts_v3";                    // 全新本地存储 key
+const KEY_NAME      = "jdb_accounts_final";                 // 全新隔离缓存
 
 function sendNotification(title, sub, body) { $notification.post(title, sub, body); }
 
-// 防抖锁（2秒内只允许触发一次）
-const LOCK_KEY  = "jdb_sync_lock_v3";
-const nowTime   = Date.now();
-const lockTime  = parseInt($persistentStore.read(LOCK_KEY) || "0");
-if (nowTime - lockTime < 2000) { $done(); }
-$persistentStore.write(nowTime.toString(), LOCK_KEY);
-
+// 提取请求头（兼容大小写）
 function getHeader(name) {
     return $request.headers[name] || $request.headers[name.toLowerCase()] || $request.headers[name.toUpperCase()] || null;
 }
@@ -23,8 +17,25 @@ function getHeader(name) {
 const token = getHeader("apitoken");
 const unique = getHeader("unique_identity");
 
-if (!token || !unique) { $done(); }
+// 🌟 核心修复：没有 unique_identity 的垃圾埋点请求，直接放行！绝对不会抢占防抖锁！
+if (!token || !unique) {
+    $done();
+    return;
+}
 
+// 🌟 只有真正的抽奖请求，才会触发下面的防抖锁逻辑
+const LOCK_KEY  = "jdb_sync_lock_final";
+const nowTime   = Date.now();
+const lockTime  = parseInt($persistentStore.read(LOCK_KEY) || "0");
+if (nowTime - lockTime < 2000) {
+    $done();
+    return;
+}
+$persistentStore.write(nowTime.toString(), LOCK_KEY);
+
+console.log("🔑 捕获到真实抽奖Token: " + token.slice(0, 10) + "***");
+
+// ============ 多账号去重与追加 ============
 let accounts = [];
 try { accounts = JSON.parse($persistentStore.read(KEY_NAME) || "[]"); }
 catch (e) { accounts = []; }
@@ -49,7 +60,7 @@ if (exists) {
 }
 $persistentStore.write(JSON.stringify(accounts), KEY_NAME);
 
-// ============ 同步到青龙 ============
+// ============ 同步到青龙（保留自定义备注） ============
 $httpClient.get({ url: `${QL_URL}/open/auth/token?client_id=${CLIENT_ID}&client_secret=${CLIENT_SECRET}`, timeout: 5 }, function (err, resp, data) {
     if (err || !data) return $done();
     let qlToken;
@@ -60,7 +71,6 @@ $httpClient.get({ url: `${QL_URL}/open/auth/token?client_id=${CLIENT_ID}&client_
         let envs;
         try { envs = JSON.parse(data2).data; } catch (e) { return $done(); }
 
-        // 🌟 核心：解析青龙现有的环境变量，提取用户自定义的备注
         let qlRemarks = {};
         if (envs && envs.length > 0 && envs[0].value) {
             envs[0].value.split("\n").forEach(line => {
@@ -73,12 +83,9 @@ $httpClient.get({ url: `${QL_URL}/open/auth/token?client_id=${CLIENT_ID}&client_
             });
         }
 
-        // 组装推送数据，优先使用青龙里已有的备注
         const formatted = accounts.map(a => {
             let finalRemark = qlRemarks[a.unique] ? qlRemarks[a.unique] : a.remark;
-            if (qlRemarks[a.unique]) {
-                a.remark = qlRemarks[a.unique]; // 同步更新本地缓存，避免下次覆盖
-            }
+            if (qlRemarks[a.unique]) { a.remark = qlRemarks[a.unique]; }
             return `${a.token},${a.unique},${finalRemark}`;
         }).join("\n");
 
