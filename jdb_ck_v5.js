@@ -1,11 +1,12 @@
 // ==========================================
-// 加多宝 抓包同步青龙（多账号完美版 v4 - 彻底修复埋点抢锁Bug）
+// 加多宝 抓包同步青龙（多账号完美版 v5 - 彻底修复埋点干扰）
 // ==========================================
 const QL_URL        = "http://192.168.99.1:5700";           // ⚠️ 青龙地址
 const CLIENT_ID     = "tGj6_OuEQFme";                       // 青龙 openapi id
 const CLIENT_SECRET = "mvz-zcTL3FAWsTEDCikXvD_M";           // 青龙 openapi secret
 const ENV_NAME      = "JDBC_ACCOUNTS";                      // 加多宝环境变量名
-const KEY_NAME      = "jdb_accounts_final";                 // 全新隔离缓存
+const KEY_NAME      = "jdb_accounts_v5";                    // 全新隔离缓存，杜绝旧数据
+const LOCK_KEY      = "jdb_sync_lock_v5";                   // 全新防抖锁
 
 function sendNotification(title, sub, body) { $notification.post(title, sub, body); }
 
@@ -17,16 +18,15 @@ function getHeader(name) {
 const token = getHeader("apitoken");
 const unique = getHeader("unique_identity");
 
-// 🌟 核心修复：没有 unique_identity 的垃圾埋点请求，直接放行！绝对不会抢占防抖锁！
+// 🌟 核心修复 1：没有 unique_identity 的垃圾埋点请求，直接放行，绝不抢锁！
 if (!token || !unique) {
     $done();
     return;
 }
 
-// 🌟 只有真正的抽奖请求，才会触发下面的防抖锁逻辑
-const LOCK_KEY  = "jdb_sync_lock_final";
-const nowTime   = Date.now();
-const lockTime  = parseInt($persistentStore.read(LOCK_KEY) || "0");
+// 🌟 核心修复 2：只有真正的抽奖请求，才会触发防抖锁（2秒内只允许一次）
+const nowTime  = Date.now();
+const lockTime = parseInt($persistentStore.read(LOCK_KEY) || "0");
 if (nowTime - lockTime < 2000) {
     $done();
     return;
@@ -71,6 +71,7 @@ $httpClient.get({ url: `${QL_URL}/open/auth/token?client_id=${CLIENT_ID}&client_
         let envs;
         try { envs = JSON.parse(data2).data; } catch (e) { return $done(); }
 
+        // 读取青龙里的老备注，避免把用户自定义的备注覆盖掉
         let qlRemarks = {};
         if (envs && envs.length > 0 && envs[0].value) {
             envs[0].value.split("\n").forEach(line => {
