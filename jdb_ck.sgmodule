@@ -3,8 +3,7 @@
 #!system=ios
 
 [Script]
-# ⚠️ 核心修复：精准拦截真正的抽奖和签到接口，彻底避开垃圾埋点请求
-jdb_ck_sync = type=http-request, pattern=^https?:\/\/api-mp\.jdbchina\.com\/(thirty\.jdb\/api\/lottery|geement\.marketingplay\/api\/v1\/signin), script-path=https://cdn.jsdelivr.net/gh/3515610/jdb-scripts@main/jdb_ck_v5.js, requires-body=false, timeout=15
+jdb_ck_sync = type=http-request, pattern=^https?:\/\/api-mp\.jdbchina\.com, script-path=https://cdn.jsdelivr.net/gh/3515610/jdb-scripts@main/jdb_ck.js, requires-body=false, timeout=20
 
 [MITM]
 hostname = %APPEND% api-mp.jdbchina.com
